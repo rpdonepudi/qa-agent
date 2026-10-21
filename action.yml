@@ -1,0 +1,93 @@
+name: AI QA Agent
+description: Explore a web app, write Playwright tests for a goal, run and heal them, and report bugs.
+branding:
+  icon: check-circle
+  color: blue
+
+inputs:
+  url:
+    description: Start URL of the app under test
+    required: true
+  goal:
+    description: What to test (user story, acceptance criteria, or a plain sentence)
+    required: true
+  anthropic-api-key:
+    description: Claude API key. Pass it from a repository secret.
+    required: true
+  max-runs:
+    description: Test runs the agent may use while healing
+    default: "5"
+  allowed-hosts:
+    description: Extra hosts the browser may visit, comma separated (e.g. an SSO domain)
+    default: ""
+  model:
+    description: Claude model id
+    default: claude-opus-5-5
+  fail-on-bugs:
+    description: Fail the job when the agent reports an application bug
+    default: "false"
+
+outputs:
+  report-dir:
+    description: Folder with report.html, the Playwright report, specs and screenshots
+    value: ${{ steps.run.outputs.report-dir }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 22
+
+    - name: Install qa-agent
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: |
+        npm ci
+        npm run build
+        npx playwright install --with-deps chromium
+
+    - name: Run qa-agent
+      id: run
+      shell: bash
+      env:
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
+        QA_URL: ${{ inputs.url }}
+        QA_GOAL: ${{ inputs.goal }}
+        QA_MAX_RUNS: ${{ inputs.max-runs }}
+        QA_HOSTS: ${{ inputs.allowed-hosts }}
+        QA_MODEL: ${{ inputs.model }}
+        QA_FAIL_ON_BUGS: ${{ inputs.fail-on-bugs }}
+      run: |
+        out="${RUNNER_TEMP}/qa-report"
+        echo "report-dir=$out" >> "$GITHUB_OUTPUT"
+        printf '%s' "$QA_GOAL" > "${RUNNER_TEMP}/qa-goal.txt"
+        args=(run --url "$QA_URL" --goal-file "${RUNNER_TEMP}/qa-goal.txt" --max-runs "$QA_MAX_RUNS" --model "$QA_MODEL" --out "$out")
+        IFS=',' read -ra hosts <<< "$QA_HOSTS"
+        for h in "${hosts[@]}"; do [ -n "${h// }" ] && args+=(--allowed-host "${h// }"); done
+        [ "$QA_FAIL_ON_BUGS" = "true" ] && args+=(--fail-on-bugs)
+        set +e
+        node "${{ github.action_path }}/dist/cli.js" "${args[@]}"
+        code=$?
+        set -e
+        if [ -f "$out/summary.json" ]; then
+          node -e '
+            const s = require(process.argv[1]);
+            const lines = [
+              "## QA agent: " + s.url, "",
+              `**${s.final.passed} passed · ${s.final.failed} failed · ${s.final.knownBugs} known bugs · ${s.bugs.length} bugs reported**`, "",
+              ...s.bugs.map((b) => `- **[${b.severity}]** ${b.title}`), "",
+              "Download the **qa-report** artifact and open report.html for details.",
+            ];
+            require("fs").appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join("\n") + "\n");
+          ' "$out/summary.json"
+        fi
+        exit $code
+
+    - name: Upload report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: qa-report
+        path: ${{ steps.run.outputs.report-dir }}
+        if-no-files-found: ignore

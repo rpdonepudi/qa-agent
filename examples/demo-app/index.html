@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Acme Tasks - Sign in</title>
+<style>body{font-family:system-ui;max-width:360px;margin:60px auto}label{display:block;margin-top:12px}input{width:100%;padding:6px}button{margin-top:16px;padding:8px 16px}.error{color:#b3261e}</style></head>
+<body>
+<h1>Sign in to Acme Tasks</h1>
+<form id="login" novalidate>
+  <label for="email">Email</label><input id="email" type="email" autocomplete="username">
+  <label for="password">Password</label><input id="password" type="password" autocomplete="current-password">
+  <p id="error" class="error" role="alert"></p>
+  <button type="submit">Sign in</button>
+</form>
+<p>Demo account: <code>demo@acme.test</code> / <code>secret123</code></p>
+<script>
+document.getElementById("login").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const email = document.getElementById("email").value.trim();
+  const password = document.getElementById("password").value;
+  const error = document.getElementById("error");
+  if (!email || !password) return (error.textContent = "Email and password are required.");
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return (error.textContent = "Enter a valid email address.");
+  if (email === "demo@acme.test" && password === "secret123") {
+    sessionStorage.setItem("user", email);
+    location.href = "/todos";
+  } else error.textContent = "Wrong email or password.";
+});
+</script>
+</body>
+</html>

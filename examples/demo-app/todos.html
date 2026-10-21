@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Acme Tasks - My tasks</title>
+<style>body{font-family:system-ui;max-width:480px;margin:60px auto}li{display:flex;gap:8px;align-items:center;padding:4px 0}li span{flex:1}.done span{text-decoration:line-through;color:#888}</style></head>
+<body>
+<header><span id="who"></span> <button id="logout">Sign out</button></header>
+<h1>My tasks</h1>
+<form id="add"><label for="new">New task</label> <input id="new" placeholder="What needs doing?"> <button type="submit">Add</button></form>
+<ul id="list" aria-label="Tasks"></ul>
+<p id="count"></p>
+<script>
+if (!sessionStorage.getItem("user")) location.href = "/";
+document.getElementById("who").textContent = sessionStorage.getItem("user");
+document.getElementById("logout").onclick = () => { sessionStorage.clear(); location.href = "/"; };
+const tasks = [];
+function render() {
+  const list = document.getElementById("list");
+  list.innerHTML = "";
+  tasks.forEach((t, i) => {
+    const li = document.createElement("li");
+    if (t.done) li.className = "done";
+    li.innerHTML = `<input type="checkbox" aria-label="Done: ${t.title}" ${t.done ? "checked" : ""}><span></span><button aria-label="Delete ${t.title}">Delete</button>`;
+    li.querySelector("span").textContent = t.title;
+    li.querySelector("input").onchange = () => { t.done = !t.done; render(); };
+    // Planted bug for the demo: deletes the first task, not the clicked one.
+    li.querySelector("button").onclick = () => { tasks.splice(0, 1); render(); };
+    list.appendChild(li);
+  });
+  const left = tasks.filter((t) => !t.done).length;
+  document.getElementById("count").textContent = `${left} ${left === 1 ? "task" : "tasks"} left`;
+}
+document.getElementById("add").onsubmit = (e) => {
+  e.preventDefault();
+  const input = document.getElementById("new");
+  const title = input.value.trim();
+  if (title) tasks.push({ title, done: false });
+  input.value = "";
+  render();
+};
+render();
+</script>
+</body>
+</html>

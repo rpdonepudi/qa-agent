@@ -1,0 +1,30 @@
+# Run the QA agent from the Actions tab ("Run workflow"), or on a schedule against staging.
+name: QA agent
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: App URL to test
+        required: true
+      goal:
+        description: What to test
+        required: true
+      max-runs:
+        description: Healing runs
+        default: "5"
+  # schedule:
+  #   - cron: "0 6 * * 1-5"   # weekdays 06:00 UTC; set QA_URL and QA_GOAL repo variables first
+
+jobs:
+  qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./
+        with:
+          url: ${{ inputs.url || vars.QA_URL }}
+          goal: ${{ inputs.goal || vars.QA_GOAL }}
+          max-runs: ${{ inputs.max-runs || '5' }}
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}

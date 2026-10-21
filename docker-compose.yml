@@ -1,0 +1,12 @@
+services:
+  qa-agent:
+    build: .
+    ports:
+      - "3000:3000"
+    env_file: .env
+    volumes:
+      - qa-runs:/app/runs
+    restart: unless-stopped
+
+volumes:
+  qa-runs:

@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QA Agent</title>
+<style>
+:root { --bg:#f7f7f5; --card:#fff; --text:#1d1d1b; --muted:#6b6b66; --line:#e3e2dc; --accent:#3d5afe; --good:#1f7a4d; --bad:#b3261e; --warn:#9a6700; }
+@media (prefers-color-scheme: dark) { :root { --bg:#161615; --card:#1f1f1d; --text:#ecebe6; --muted:#a09f99; --line:#33332f; --accent:#8c9eff; --good:#5cc495; --bad:#ff8a80; --warn:#e3b341; } }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--text); font:15px/1.5 system-ui, -apple-system, Segoe UI, sans-serif; }
+main { max-width:1100px; margin:0 auto; padding:24px 16px 64px; display:grid; grid-template-columns:minmax(0,380px) minmax(0,1fr); gap:20px; }
+@media (max-width:860px) { main { grid-template-columns:1fr; } }
+header { grid-column:1/-1; } h1 { margin:0; font-size:22px; } h2 { font-size:15px; margin:0 0 12px; }
+.muted { color:var(--muted); font-size:13px; }
+.card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; }
+label { display:block; font-weight:600; font-size:13px; margin:12px 0 4px; }
+input, textarea { width:100%; font:inherit; color:inherit; background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:8px 10px; }
+textarea { min-height:140px; resize:vertical; }
+button { font:inherit; font-weight:600; border:0; border-radius:6px; padding:9px 16px; background:var(--accent); color:#fff; cursor:pointer; }
+button.ghost { background:none; color:var(--text); border:1px solid var(--line); }
+button:disabled { opacity:.5; cursor:default; }
+.runs { list-style:none; margin:0; padding:0; } .runs li { padding:10px 0; border-bottom:1px solid var(--line); cursor:pointer; } .runs li:last-child { border-bottom:0; }
+.runs li.active .u { color:var(--accent); }
+.u { font-weight:600; word-break:break-all; }
+.pill { font-size:12px; font-weight:600; padding:1px 8px; border-radius:99px; border:1px solid currentColor; }
+.done { color:var(--good); } .failed, .cancelled { color:var(--bad); } .running, .queued { color:var(--warn); }
+#log { height:460px; overflow:auto; background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:10px; font:12.5px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space:pre-wrap; word-break:break-word; }
+#log .status { color:var(--accent); font-weight:700; margin-top:8px; } #log .agent { color:var(--text); margin:8px 0; font-family:system-ui, sans-serif; font-size:14px; } #log .tool { color:var(--muted); } #log .test { color:var(--muted); opacity:.8; }
+.row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.stats { display:flex; gap:16px; flex-wrap:wrap; margin:8px 0 12px; } .stats b { font-size:20px; display:block; }
+a { color:var(--accent); }
+#authbar { display:none; margin-top:8px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>QA Agent</h1>
+    <div class="muted">Point it at a web app and describe what to test. It explores, writes a test plan and Playwright tests, runs them, fixes its own flaky tests, and reports real bugs.</div>
+    <div id="authbar" class="row"><input id="token" type="password" placeholder="Access token" style="max-width:260px"><button class="ghost" id="saveToken">Save</button></div>
+  </header>
+
+  <section>
+    <form class="card" id="form">
+      <h2>New run</h2>
+      <label for="url">App URL</label>
+      <input id="url" type="url" required placeholder="https://staging.example.com/login">
+      <label for="goal">What to test</label>
+      <textarea id="goal" required placeholder="As a user I can sign up with email and password. Check validation for empty fields, invalid email, short password, and that a successful sign-up lands on the dashboard."></textarea>
+      <label for="maxRuns">Healing runs</label>
+      <input id="maxRuns" type="number" min="1" max="15" value="5">
+      <label for="hosts">Extra allowed hosts <span class="muted">(optional, comma separated)</span></label>
+      <input id="hosts" placeholder="auth.example.com">
+      <div class="row" style="margin-top:16px"><button id="start">Start run</button><span id="formMsg" class="muted"></span></div>
+    </form>
+
+    <div class="card" style="margin-top:20px">
+      <h2>Runs</h2>
+      <ul class="runs" id="runs"><li class="muted">No runs yet.</li></ul>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="row" style="justify-content:space-between">
+      <h2 id="runTitle" style="margin:0">Live log</h2>
+      <div class="row"><a id="reportLink" href="#" target="_blank" hidden>Open report</a><button class="ghost" id="cancel" hidden>Cancel</button></div>
+    </div>
+    <div class="stats" id="stats"></div>
+    <div id="log"><span class="muted">Start a run or pick one from the list.</span></div>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+let token = "";
+try { token = localStorage.getItem("qa-token") || ""; } catch {}
+let current = null, source = null;
+
+const q = (p) => token ? `${p}${p.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}` : p;
+async function api(p, opts = {}) {
+  const res = await fetch(p, { ...opts, headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) } });
+  if (res.status === 401) { $("authbar").style.display = "flex"; throw new Error("Enter the access token first."); }
+  const body = await res.json();
+  if (!res.ok) throw new Error(body.error || res.statusText);
+  return body;
+}
+
+$("saveToken").onclick = () => { token = $("token").value.trim(); try { localStorage.setItem("qa-token", token); } catch {} $("authbar").style.display = "none"; refresh(); };
+
+$("form").onsubmit = async (e) => {
+  e.preventDefault();
+  $("start").disabled = true; $("formMsg").textContent = "";
+  try {
+    const job = await api("/api/runs", { method: "POST", body: JSON.stringify({
+      url: $("url").value, goal: $("goal").value, maxRuns: Number($("maxRuns").value),
+      allowedHosts: $("hosts").value.split(",").map((s) => s.trim()).filter(Boolean),
+    }) });
+    await refresh(); open(job.id);
+  } catch (err) { $("formMsg").textContent = err.message; }
+  $("start").disabled = false;
+};
+
+$("cancel").onclick = async () => { if (current) { await api(`/api/runs/${current}/cancel`, { method: "POST" }); refresh(); } };
+
+async function refresh() {
+  let runs;
+  try { runs = await api("/api/runs"); } catch (err) { $("runs").innerHTML = `<li class="muted">${esc(err.message)}</li>`; return; }
+  $("runs").innerHTML = runs.length ? runs.map((r) => `<li data-id="${r.id}" class="${r.id === current ? "active" : ""}">
+    <div class="row" style="justify-content:space-between"><span class="u">${esc(r.url)}</span><span class="pill ${r.state}">${r.state}</span></div>
+    <div class="muted">${new Date(r.createdAt).toLocaleString()}${r.result ? ` · ${r.result.passed} passed, ${r.result.failed} failed, ${r.result.bugs} bugs` : ""}</div></li>`).join("")
+    : `<li class="muted">No runs yet.</li>`;
+  for (const li of $("runs").querySelectorAll("li[data-id]")) li.onclick = () => open(li.dataset.id);
+}
+
+async function open(id) {
+  current = id; source?.close(); $("log").innerHTML = ""; $("stats").innerHTML = "";
+  const job = await api(`/api/runs/${id}`);
+  $("runTitle").textContent = job.url;
+  show(job); refresh();
+  source = new EventSource(q(`/api/runs/${id}/events`));
+  source.onmessage = (m) => line(JSON.parse(m.data));
+  source.addEventListener("end", async () => { source.close(); show(await api(`/api/runs/${id}`)); refresh(); });
+}
+
+function show(job) {
+  $("cancel").hidden = !(job.state === "running" || job.state === "queued");
+  $("reportLink").hidden = !job.result;
+  if (job.result) {
+    $("reportLink").href = q(job.result.reportUrl);
+    $("stats").innerHTML = [["Passed", job.result.passed], ["Failed", job.result.failed], ["Known bugs", job.result.knownBugs], ["Bugs reported", job.result.bugs]]
+      .map(([k, v]) => `<div><span class="muted">${k}</span><b>${v}</b></div>`).join("");
+  }
+  if (job.error) line({ type: "status", message: job.error });
+}
+
+function line(e) {
+  const div = document.createElement("div");
+  if (e.type === "status") { div.className = "status"; div.textContent = `▸ ${e.message}`; }
+  else if (e.type === "agent") { div.className = "agent"; div.textContent = e.text; }
+  else if (e.type === "tool") { div.className = "tool"; div.textContent = `  ${e.name}  ${e.detail}`; }
+  else { div.className = "test"; div.textContent = `    ${e.line}`; }
+  const log = $("log"); const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+  log.appendChild(div); if (atBottom) log.scrollTop = log.scrollHeight;
+}
+
+function esc(s) { return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]); }
+
+api("/api/config").then((c) => { if (!c.hasApiKey) $("formMsg").textContent = "The server has no ANTHROPIC_API_KEY set."; }).catch(() => {});
+refresh();
+setInterval(refresh, 10000);
+</script>
+</body>
+</html>
